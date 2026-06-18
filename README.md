@@ -12,7 +12,7 @@
 |------------|-----------------------------|
 | 5027241010 | Kanafira Vanesha Putri |
 | 5027241025 | Christiano Ronaldo Silalahi |
-| 5027241038 | Danuja Prasasta Bastu |
+| 5027241037 | Danuja Prasasta Bastu |
 | 5027241038 | Moch. Rizki Nasrullah |
 | 5027241069 | Prabaswara Febrian Winandika |
 | 5027241070 | Zahra Khaalishah |
