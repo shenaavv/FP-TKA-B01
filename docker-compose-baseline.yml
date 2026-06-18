@@ -49,8 +49,9 @@ services:
     volumes:
       - mongo_data:/data/db
       - mongo_config:/data/configdb
-      # Opsional: mount init script untuk seed awal
-      # - ./Resources/DB/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+      # Auto-seed: script dijalankan otomatis saat volume mongo_data pertama kali dibuat
+      - ./Resources/DB/init-mongo.sh:/docker-entrypoint-initdb.d/init-mongo.sh:ro
+      - ./Resources/DB/dump/orderdb:/docker-seed:ro
 
     networks:
       - app_net
