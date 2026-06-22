@@ -7,8 +7,9 @@ Jalankan dari host BERBEDA dari server:
 from locust import HttpUser, task, between, events
 import random
 
-PRODUCTS_CACHE = []   # diisi saat on_start
-ORDER_IDS      = []   # shared antar user
+PRODUCTS_CACHE   = []   # diisi saat on_start
+ORDER_IDS        = []   # shared antar user
+USER_EMAILS_CACHE = []  # email user asli dari DB, diisi sekali saat test mulai
 
 CITIES    = ["Surabaya","Jakarta","Bandung","Medan","Semarang","Makassar"]
 PAYMENTS  = ["gopay","ovo","dana","transfer_bank","kartu_kredit","qris"]
@@ -23,23 +24,40 @@ class CustomerUser(HttpUser):
     wait_time = between(0.5, 2)
 
     def on_start(self):
-        """Login sebagai user biasa."""
-        # Gunakan 1 dari 10 email acak agar hit cache session
-        idx = random.randint(1, 50)
-        with self.client.post("/auth/login", json={
-            "email":    f"user{idx}@example.com",    # akan 404 tapi itu ok
-            "password": "User@12345"
-        }, catch_response=True, name="/auth/login [user]") as res:
-            # Fallback: kalau user tidak ada, pakai akun yang pasti ada
-            if res.status_code != 200:
-                res.success()   # jangan gagalkan, lanjut tanpa token
-                self.token = None
-            else:
-                self.token = res.json().get("token")
-                res.success()
+        """Login sebagai user biasa menggunakan email asli dari DB."""
+        global USER_EMAILS_CACHE, PRODUCTS_CACHE
 
-        # Ambil daftar produk sekali di awal
-        global PRODUCTS_CACHE
+        # ── Ambil daftar email user asli (sekali saja, pakai admin) ──
+        if not USER_EMAILS_CACHE:
+            r_login = self.client.post("/auth/login", json={
+                "email": "admin1@tka.its.ac.id",
+                "password": "Admin@12345"
+            }, name="/auth/login [init-admin]")
+            if r_login.status_code == 200:
+                admin_token = r_login.json().get("token")
+                r_users = self.client.get(
+                    "/admin/users?limit=100&role=user",
+                    headers={"Authorization": f"Bearer {admin_token}"},
+                    name="/admin/users [init]"
+                )
+                if r_users.status_code == 200:
+                    USER_EMAILS_CACHE = [
+                        u["email"] for u in r_users.json().get("data", [])
+                    ]
+
+        # ── Login sebagai user acak dari cache ──
+        self.token = None
+        if USER_EMAILS_CACHE:
+            email = random.choice(USER_EMAILS_CACHE)
+            with self.client.post("/auth/login", json={
+                "email":    email,
+                "password": "User@12345"
+            }, catch_response=True, name="/auth/login [user]") as res:
+                if res.status_code == 200:
+                    self.token = res.json().get("token")
+                res.success()   # jangan count sebagai failure apapun hasilnya
+
+        # ── Ambil daftar produk sekali di awal ──
         if not PRODUCTS_CACHE:
             r = self.client.get("/products?limit=50", name="/products [init]")
             if r.status_code == 200:

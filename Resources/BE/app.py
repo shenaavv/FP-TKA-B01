@@ -300,13 +300,10 @@ def delete_product(product_id):
 # ═══════════════════════════════════════════
 
 @app.route("/orders", methods=["POST"])
-@login_required
 def create_order():
     d = request.get_json() or {}
     if not d.get("items") or not isinstance(d["items"], list) or len(d["items"]) == 0:
         return err("Field 'items' wajib diisi dan tidak boleh kosong")
-
-    user = users_col.find_one({"_id": ObjectId(g.user_id)}, {"password": 0})
 
     # Validasi & hitung item
     order_items = []
@@ -347,11 +344,11 @@ def create_order():
     import uuid
     doc = {
         "order_id":        str(uuid.uuid4()),
-        "user_id":         ObjectId(g.user_id),
-        "customer_name":   user["name"],
-        "customer_email":  user["email"],
-        "customer_city":   user.get("city", ""),
-        "customer_address":d.get("address", user.get("address", "")),
+        "user_id":         None,
+        "customer_name":   d.get("customer_name", "Guest User"),
+        "customer_email":  d.get("customer_email", "guest@example.com"),
+        "customer_city":   d.get("city", ""),
+        "customer_address":d.get("address", ""),
         "items":           order_items,
         "subtotal":        subtotal,
         "discount_pct":    0,
@@ -371,16 +368,15 @@ def create_order():
 
 
 @app.route("/orders", methods=["GET"])
-@login_required
 def list_orders():
-    # User hanya lihat ordernya sendiri; admin lihat semua
-    query = {} if g.role == "admin" else {"user_id": ObjectId(g.user_id)}
+    # Tanpa login, lihat semua order
+    query = {}
 
     status = request.args.get("status")
     city   = request.args.get("city")
     if status:
         query["status"] = status
-    if city and g.role == "admin":
+    if city:
         query["customer_city"] = city
 
     try:
@@ -399,11 +395,8 @@ def list_orders():
 
 
 @app.route("/orders/<order_id>", methods=["GET"])
-@login_required
 def get_order(order_id):
     query = {"order_id": order_id}
-    if g.role != "admin":
-        query["user_id"] = ObjectId(g.user_id)
     doc = orders_col.find_one(query)
     if not doc:
         return err("Order tidak ditemukan", 404)
