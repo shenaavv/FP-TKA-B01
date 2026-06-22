@@ -425,6 +425,53 @@ def update_order_status(order_id):
     return jsonify({"order_id": order_id, "status": d["status"]})
 
 # ═══════════════════════════════════════════
+# SIMPLE ORDER ENDPOINTS (Untuk Frontend index.html)
+# ═══════════════════════════════════════════
+
+@app.route("/order", methods=["POST"])
+def create_order_simple():
+    d = request.get_json() or {}
+    product_name = d.get("product")
+    qty = int(d.get("quantity", 1))
+    price = float(d.get("price", 0))
+    total = qty * price
+    
+    import uuid
+    now = now_iso()
+    doc = {
+        "order_id": str(uuid.uuid4()),
+        "product": product_name,
+        "quantity": qty,
+        "price": price,
+        "total": total,
+        "status": "pending",
+        "created_at": now,
+        "updated_at": now,
+        "items": [{ "product_name": product_name, "qty": qty, "price": price, "subtotal": total }],
+        "customer_name": "Guest User",
+        "customer_email": "guest@example.com",
+    }
+    result = orders_col.insert_one(doc)
+    doc["_id"] = result.inserted_id
+    return jsonify(serialize(doc)), 201
+
+@app.route("/order/<order_id>", methods=["GET"])
+def get_order_simple(order_id):
+    doc = orders_col.find_one({"order_id": order_id})
+    if not doc:
+        return err("Order not found", 404)
+    return jsonify(serialize(doc))
+
+@app.route("/order/<order_id>", methods=["PUT"])
+def update_order_simple(order_id):
+    d = request.get_json() or {}
+    status = d.get("status")
+    result = orders_col.update_one({"order_id": order_id}, {"$set": {"status": status, "updated_at": now_iso()}})
+    if result.matched_count == 0:
+        return err("Order not found", 404)
+    return jsonify({"order_id": order_id, "status": status})
+
+# ═══════════════════════════════════════════
 # ADMIN — User management
 # ═══════════════════════════════════════════
 
