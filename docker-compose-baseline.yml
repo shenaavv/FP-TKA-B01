@@ -1,8 +1,8 @@
 # =====================================================
 # docker-compose-baseline.yml
 # FP-TKA-B01 — Baseline Config: 1 VM, No Load Balancer
-# VM: DigitalOcean Droplet — 2 vCPU, 2 GB RAM, 60 GB
-# Harga: $18/bulan
+# VM: DigitalOcean Droplet — 4 vCPU, 8 GB RAM, 160 GB
+# Harga: $48/bulan
 # =====================================================
 #
 # Topologi:
@@ -10,7 +10,7 @@
 #
 # Services:
 #   - nginx    : Reverse proxy + serve frontend statis
-#   - backend  : Flask app (Gunicorn, 4 workers x 2 threads)
+#   - backend  : Flask app (Gunicorn, 8 workers x 2 threads)
 #   - mongo    : MongoDB 7.0 (database)
 #
 # Cara pakai:
@@ -69,13 +69,13 @@ services:
     deploy:
       resources:
         limits:
-          memory: 768M
+          memory: 3G
         reservations:
-          memory: 256M
+          memory: 512M
 
     command: >
       mongod
-      --wiredTigerCacheSizeGB 0.5
+      --wiredTigerCacheSizeGB 2
       --quiet
 
   backend:
@@ -95,7 +95,7 @@ services:
       JWT_SECRET:            ${JWT_SECRET}
       JWT_EXPIRES:           ${JWT_EXPIRES}
       PORT:                  5000
-      GUNICORN_WORKERS:      ${GUNICORN_WORKERS:-4}
+      GUNICORN_WORKERS:      ${GUNICORN_WORKERS:-8}
       GUNICORN_THREADS:      ${GUNICORN_THREADS:-2}
       GUNICORN_TIMEOUT:      ${GUNICORN_TIMEOUT:-120}
       GUNICORN_WORKER_CLASS: ${GUNICORN_WORKER_CLASS:-gthread}
@@ -120,9 +120,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 640M
+          memory: 3G
         reservations:
-          memory: 128M
+          memory: 256M
 
 
   nginx:
@@ -154,6 +154,6 @@ services:
     deploy:
       resources:
         limits:
-          memory: 128M
+          memory: 256M
         reservations:
-          memory: 32M
+          memory: 64M

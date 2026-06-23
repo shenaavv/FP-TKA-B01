@@ -15,7 +15,7 @@ Klien / Locust
 │                  DigitalOcean Droplet                │
 │   ┌──────────┐    ┌────────────────┐    ┌────────┐  │
 │   │  Nginx   │───▶│ Gunicorn+Flask │───▶│ Mongo  │  │
-│   │ (proxy)  │    │  4w × 2t       │    │  7.0   │  │
+│   │ (proxy)  │    │  8w × 2t       │    │  7.0   │  │
 │   └──────────┘    └────────────────┘    └────────┘  │
 │     port 80           port 5000        port 27017   │
 │              (internal Docker network)               │
@@ -33,14 +33,14 @@ Klien / Locust
 | Komponen | Detail |
 |----------|--------|
 | **Provider** | DigitalOcean |
-| **Tipe** | Droplet (vm4 — setara tabel soal) |
-| **vCPU** | 2 vCPU |
-| **RAM** | 2 GB |
-| **Disk** | 60 GB SSD |
+| **Tipe** | Droplet (Basic) |
+| **vCPU** | 4 vCPU |
+| **RAM** | 8 GB |
+| **Disk** | 160 GB SSD |
 | **OS** | Ubuntu 24.04 LTS |
-| **Harga** | **$18 / bulan** |
+| **Harga** | **$48 / bulan** |
 | **Jumlah VM** | **1 VM** (all-in-one) |
-| **Total Biaya** | **$18 / bulan** |
+| **Total Biaya** | **$48 / bulan** |
 
 ---
 
@@ -91,17 +91,17 @@ upstream flask_backend {
 
 | Parameter | Nilai | Keterangan |
 |-----------|-------|------------|
-| `--workers` | **4** | (2 × vCPU) + 0, dikurangi 1 untuk hemat RAM |
-| `--threads` | **2** | Per worker → total slot = 4 × 2 = **8 concurrent** |
+| `--workers` | **8** | (2 × vCPU) + 1 = 9, dipakai 8 untuk headroom |
+| `--threads` | **2** | Per worker → total slot = 8 × 2 = **16 concurrent** |
 | `--worker-class` | `gthread` | I/O-bound: cocok untuk request DB |
 | `--timeout` | 120s | Worker restart jika tidak respond |
 | `--bind` | `0.0.0.0:5000` | Internal network |
-| Total concurrency | **8 slot** | 4 workers × 2 threads |
+| Total concurrency | **16 slot** | 8 workers × 2 threads |
 
 **Rumus workers:**
 ```
-Rumus standar: (2 × vCPU) + 1 = 5
-Dipakai 4 workers untuk menyisakan RAM untuk MongoDB
+Rumus standar: (2 × vCPU) + 1 = 9
+Dipakai 8 workers untuk menyisakan RAM untuk MongoDB
 ```
 
 ---
@@ -113,7 +113,7 @@ Dipakai 4 workers untuk menyisakan RAM untuk MongoDB
 | Parameter | Nilai | Keterangan |
 |-----------|-------|------------|
 | Versi | **7.0** | LTS |
-| `wiredTigerCacheSizeGB` | **0.5 GB** | Cache MongoDB (dibatasi untuk VM 2 GB) |
+| `wiredTigerCacheSizeGB` | **2 GB** | Cache MongoDB (50% RAM yang dialokasikan) |
 | Port | 27017 | Internal only (tidak expose ke host) |
 | Auth | username/password | `MONGO_INITDB_ROOT_USERNAME/PASSWORD` |
 | Storage | Docker volume `mongo_data` | Persistent |
@@ -128,17 +128,17 @@ users      → index: email (UNIQUE)
 
 ---
 
-### 4.4 Alokasi Memory (RAM 2 GB)
+### 4.4 Alokasi Memory (RAM 8 GB)
 
 | Komponen | Limit | Reserved | Estimasi Aktual |
 |----------|-------|----------|-----------------|
-| **MongoDB** | 768 MB | 256 MB | ~500–700 MB |
-| **Gunicorn + Flask** | 640 MB | 128 MB | ~300–500 MB |
-| **Nginx** | 128 MB | 32 MB | ~20–50 MB |
-| **Docker daemon + OS** | — | — | ~200–300 MB |
-| **Total** | ~1.5 GB soft limit | — | **≤ 2 GB** |
+| **MongoDB** | 3 GB | 512 MB | ~2–3 GB |
+| **Gunicorn + Flask** | 3 GB | 256 MB | ~800 MB–1.5 GB |
+| **Nginx** | 256 MB | 64 MB | ~20–50 MB |
+| **Docker daemon + OS** | — | — | ~300–500 MB |
+| **Total** | ~6.5 GB soft limit | — | **≤ 8 GB** |
 
-> ⚠️ Alokasi cukup ketat. Jika MongoDB WiredTiger cache melebihi limit, container akan di-restart oleh Docker OOM killer. Konfigurasi `--wiredTigerCacheSizeGB 0.5` dipasang untuk mencegah hal ini.
+> ✅ Alokasi cukup longgar. MongoDB WiredTiger cache 2 GB memungkinkan sebagian besar working-set data tersimpan di memori, mengurangi disk I/O secara signifikan.
 
 ---
 
@@ -160,7 +160,7 @@ users      → index: email (UNIQUE)
 | `MONGO_URI` | `mongodb://admin:***@mongo:27017/orderdb?authSource=admin` | URI koneksi MongoDB |
 | `JWT_SECRET` | (string acak panjang) | Secret key untuk signing JWT |
 | `JWT_EXPIRES` | 86400 | Masa berlaku token (detik = 24 jam) |
-| `GUNICORN_WORKERS` | 4 | Jumlah worker process |
+| `GUNICORN_WORKERS` | 8 | Jumlah worker process |
 | `GUNICORN_THREADS` | 2 | Thread per worker |
 | `GUNICORN_WORKER_CLASS` | gthread | Tipe worker Gunicorn |
 | `GUNICORN_TIMEOUT` | 120 | Timeout worker (detik) |
@@ -237,11 +237,11 @@ curl http://localhost/products
 
 | Metrik | Estimasi Baseline |
 |--------|-------------------|
-| Gunicorn concurrent slots | **8** (4 workers × 2 threads) |
-| Nginx max connections | ~2048 (2 workers × 1024) |
-| Target RPS (GET sederhana) | ~50–150 RPS |
-| Target RPS (POST order) | ~20–80 RPS |
-| Bottleneck utama | MongoDB (single instance, WiredTiger cache 0.5 GB) |
+| Gunicorn concurrent slots | **16** (8 workers × 2 threads) |
+| Nginx max connections | ~4096 (4 workers × 1024) |
+| Target RPS (GET sederhana) | ~150–400 RPS |
+| Target RPS (POST order) | ~80–200 RPS |
+| Bottleneck utama | MongoDB (single instance, WiredTiger cache 2 GB) |
 
 ---
 
@@ -251,8 +251,8 @@ curl http://localhost/products
 |-------------|--------|----------------------------------|
 | 1 VM, semua komponen bercampur | Resource sharing → bottleneck | Pisahkan MongoDB ke VM terpisah |
 | Tidak ada load balancer | Tidak bisa scale horizontal | Tambah Nginx upstream + VM backend |
-| WiredTiger cache hanya 0.5 GB | Performa DB terbatas | Gunakan VM dengan RAM lebih besar |
-| Gunicorn 4 workers (gthread) | Concurrency terbatas 8 slot | Coba `gevent` atau tambah workers |
+| WiredTiger cache 2 GB (shared VM) | Performa DB terbatas saat spike | Gunakan MongoDB dedicated VM |
+| Gunicorn 8 workers (gthread) | Concurrency terbatas 16 slot | Coba `gevent` atau tambah workers |
 | Tidak ada CDN | Latensi frontend tinggi | Tambah CDN atau statik hosting |
 
 ---
@@ -261,24 +261,24 @@ curl http://localhost/products
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                  DigitalOcean Droplet — $18/mo                    │
-│          Ubuntu 24.04 LTS | 2 vCPU | 2 GB RAM | 60 GB SSD        │
+│                  DigitalOcean Droplet — $48/mo                    │
+│        Ubuntu 24.04 LTS | 4 vCPU | 8 GB RAM | 160 GB SSD         │
 │                                                                    │
 │  ┌──────────────────── Docker Engine ──────────────────────────┐  │
 │  │                                                              │  │
 │  │  ┌─────────────┐      ┌──────────────────┐                  │  │
 │  │  │   Nginx     │      │  Flask + Gunicorn │                  │  │
-│  │  │  1.25-alpine│─────▶│  4 workers       │                  │  │
+│  │  │  1.25-alpine│─────▶│  8 workers       │                  │  │
 │  │  │  port: 80   │      │  2 threads/worker│                  │  │
-│  │  │  ~20-50 MB  │      │  ~300-500 MB RAM │                  │  │
+│  │  │  ~20-50 MB  │      │  ~800 MB-1.5 GB │                  │  │
 │  │  └─────────────┘      └────────┬─────────┘                  │  │
 │  │         ▲                      │                              │  │
 │  │         │                      ▼                              │  │
 │  │     Internet            ┌─────────────┐                      │  │
 │  │    (port 80)            │  MongoDB    │                      │  │
 │  │                         │    7.0      │                      │  │
-│  │                         │ cache 0.5GB │                      │  │
-│  │                         │ ~500-700 MB │                      │  │
+│  │                         │ cache 2 GB  │                      │  │
+│  │                         │  ~2-3 GB   │                      │  │
 │  │                         └─────────────┘                      │  │
 │  │                                                              │  │
 │  │            [Docker network: app_net 172.20.0.0/24]          │  │
@@ -292,12 +292,12 @@ curl http://localhost/products
 
 | Komponen | Spesifikasi | Harga/bulan |
 |----------|-------------|-------------|
-| Droplet (vm4) | 2 vCPU, 2 GB RAM, 60 GB SSD | **$18.00** |
+| Droplet (Basic) | 4 vCPU, 8 GB RAM, 160 GB SSD | **$48.00** |
 | Load Balancer | Tidak digunakan | $0 |
 | VM Tambahan | Tidak ada | $0 |
-| **Total** | | **$18.00 / bulan** |
+| **Total** | | **$48.00 / bulan** |
 
-> Dalam rupiah (kurs ~Rp16.000/USD): **≈ Rp 288.000 / bulan**  
-> Jauh di bawah budget maksimal **Rp 1.300.000 / bulan**
+> Dalam rupiah (kurs ~Rp16.000/USD): **≈ Rp 768.000 / bulan**  
+> Masih di bawah budget maksimal **Rp 1.300.000 / bulan**
 
 ---
