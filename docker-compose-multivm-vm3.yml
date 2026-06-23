@@ -1,0 +1,77 @@
+# =====================================================
+# docker-compose-multivm-vm3.yml
+# VM-3: MongoDB Dedicated
+# Spec: 2 vCPU, 4 GB RAM — $24/mo
+# =====================================================
+#
+# DEPLOY PERTAMA KALI (sebelum VM1 dan VM2)
+#
+# Cara pakai:
+#   git clone ... && cd FP-TKA-B01
+#   cp .env.example .env && nano .env
+#   docker compose -f docker-compose-multivm-vm3.yml up -d
+# =====================================================
+
+version: "3.9"
+
+networks:
+  mongo_net:
+    driver: bridge
+
+volumes:
+  mongo_data_multivm:
+    driver: local
+  mongo_config_multivm:
+    driver: local
+
+services:
+
+  mongo:
+    image: mongo:7.0
+    container_name: fp_mongo_multivm
+    restart: unless-stopped
+
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE:      ${MONGO_INITDB_DATABASE}
+
+    # Expose ke semua interface agar VM1 dan VM2 bisa connect
+    # Security: diatur oleh DigitalOcean Cloud Firewall (bukan Docker)
+    # Firewall rule: allow port 27017 ONLY from VM1 dan VM2 private IP
+    ports:
+      - "27017:27017"
+
+    volumes:
+      - mongo_data_multivm:/data/db
+      - mongo_config_multivm:/data/configdb
+      # Auto-seed + auto-index saat volume pertama kali dibuat
+      - ./Resources/DB/init-mongo.sh:/docker-entrypoint-initdb.d/01-init-mongo.sh:ro
+      - ./Resources/DB/dump/orderdb:/docker-seed:ro
+      - ./Resources/DB/init-indexes.js:/docker-entrypoint-initdb.d/02-init-indexes.js:ro
+
+    networks:
+      - mongo_net
+
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 15s
+      timeout:  10s
+      retries:  5
+      start_period: 30s
+
+    deploy:
+      resources:
+        limits:
+          memory: 3500M    # ~87.5% dari 4 GB RAM, sisanya untuk OS
+        reservations:
+          memory: 512M
+
+    # WiredTiger cache: 50% dari allocated memory = ~1.5 GB
+    # Jauh lebih besar dari baseline (0.5 GB) dan optimized (2 GB shared)
+    # Karena dedicated, tidak ada kompetisi dengan Flask/Nginx
+    command: >
+      mongod
+      --wiredTigerCacheSizeGB 1.5
+      --bind_ip_all
+      --quiet

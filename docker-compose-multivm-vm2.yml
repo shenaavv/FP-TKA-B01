@@ -1,0 +1,66 @@
+# =====================================================
+# docker-compose-multivm-vm2.yml
+# VM-2: Backend-2 (Flask/Gunicorn)
+# Spec: 2 vCPU, 4 GB RAM — $24/mo
+# =====================================================
+#
+# DEPLOY KEDUA (setelah VM3 MongoDB sudah running)
+#
+# Cara pakai:
+#   git clone ... && cd FP-TKA-B01
+#   cp .env.example .env && nano .env
+#   # Pastikan MONGO_URI mengarah ke VM3_PRIVATE_IP
+#   docker compose -f docker-compose-multivm-vm2.yml up -d --build
+# =====================================================
+
+version: "3.9"
+
+networks:
+  backend_net:
+    driver: bridge
+
+services:
+
+  backend_2:
+    build:
+      context: ./Resources/BE
+      dockerfile: Dockerfile-optimized
+    image: fp_backend_multivm:latest
+    container_name: fp_backend_2_multivm
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    environment:
+      MONGO_URI:             ${MONGO_URI}       # harus point ke VM3_PRIVATE_IP
+      JWT_SECRET:            ${JWT_SECRET}
+      JWT_EXPIRES:           ${JWT_EXPIRES}
+      PORT:                  5000
+      GUNICORN_WORKERS:      ${GUNICORN_WORKERS:-4}
+      GUNICORN_THREADS:      ${GUNICORN_THREADS:-4}
+      GUNICORN_WORKER_CLASS: gthread
+      GUNICORN_TIMEOUT:      ${GUNICORN_TIMEOUT:-120}
+      INSTANCE_ID:           backend_2
+
+    # Port 5000 di-expose agar VM1 bisa reach via private network
+    # Security: DigitalOcean Firewall — allow port 5000 ONLY from VM1 private IP
+    ports:
+      - "5000:5000"
+
+    networks:
+      - backend_net
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 20s
+      timeout:  10s
+      retries:  5
+      start_period: 20s
+
+    deploy:
+      resources:
+        limits:
+          memory: 3500M    # ~87.5% dari 4 GB RAM
+        reservations:
+          memory: 256M
