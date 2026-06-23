@@ -3,9 +3,12 @@ Order Processing Service — Backend API (OPTIMIZED)
 Flask + MongoDB + JWT Auth
 
 Optimasi dibanding baseline:
-  1. gevent monkey-patch  : async I/O untuk semua socket ops
-  2. MongoClient pool     : maxPoolSize=20, tuned timeouts
+  1. gthread workers      : lebih stabil dengan pymongo 4.x
+  2. MongoClient pool     : maxPoolSize=30, timeout tuning
   3. write_log async      : audit log tidak block HTTP response
+  4. 2 instance + LB      : request didistribusikan nginx least_conn
+  5. MongoDB indexes      : 13 index untuk query utama
+  6. Nginx proxy cache    : /products di-cache 30–60 detik
 
 Collections:
     users       — akun user & admin
@@ -19,18 +22,15 @@ Env vars:
     JWT_EXPIRES — default: 86400 (detik = 24 jam)
 
 Install:
-    pip install flask pymongo bcrypt PyJWT gunicorn gevent
+    pip install flask pymongo bcrypt PyJWT gunicorn
 Run:
-    gunicorn -w 3 -k gevent --worker-connections 1000 -b 0.0.0.0:5000 app:app
+    gunicorn -w 4 -k gthread --threads 4 -b 0.0.0.0:5000 app:app
 """
 
-# ═══════════════════════════════════════════
-# OPTIMASI #1: gevent monkey-patch
-# Harus dilakukan SEBELUM import lainnya agar
-# socket, threading, dll menggunakan gevent async
-# ═══════════════════════════════════════════
-from gevent import monkey
-monkey.patch_all()
+# CATATAN: gevent monkey.patch_all() TIDAK digunakan karena
+# pymongo 4.x memiliki background threads internal (Monitor, Pool
+# Maintenance) yang tidak kompatibel dengan gevent greenlets.
+# Gunakan worker class gthread yang stabil dengan pymongo.
 
 import os
 import threading
@@ -54,21 +54,21 @@ JWT_EXPIRES = int(os.environ.get("JWT_EXPIRES", 86400))
 
 # ═══════════════════════════════════════════
 # OPTIMASI #2: MongoDB Connection Pool Tuning
-# Baseline: MongoClient(MONGO_URI) — default pool 100, no timeout tuning
-# Optimized: explicit pool size + timeout settings
-#   maxPoolSize=20  : max 20 koneksi per worker process
+# Baseline: MongoClient(MONGO_URI) — default pool 100, no tuning
+# Optimized: explicit pool + timeout settings
+#   maxPoolSize=30  : max 30 koneksi per worker process
 #   minPoolSize=2   : selalu keep 2 koneksi siap pakai
 #   maxIdleTimeMS   : tutup koneksi idle > 30 detik
 #   serverSelection : timeout 5s jika MongoDB tidak reachable
 #   connectTimeout  : timeout 5s untuk connect awal
-# Dengan 2 instance × 3 workers = 6 processes × 20 pool = max 120 koneksi
+# TIDAK ada waitQueueTimeoutMS — biarkan antri (bukan 500)
+# Dengan 2 instance × 4 workers = 8 processes × 30 pool = max 240 koneksi
 # ═══════════════════════════════════════════
 client = MongoClient(
     MONGO_URI,
-    maxPoolSize=20,
+    maxPoolSize=30,
     minPoolSize=2,
     maxIdleTimeMS=30000,
-    waitQueueTimeoutMS=5000,
     serverSelectionTimeoutMS=5000,
     connectTimeoutMS=5000,
 )

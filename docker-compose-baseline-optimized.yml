@@ -105,9 +105,9 @@ services:
       JWT_SECRET:                  ${JWT_SECRET}
       JWT_EXPIRES:                 ${JWT_EXPIRES}
       PORT:                        5000
-      GUNICORN_WORKERS:            ${GUNICORN_WORKERS_OPT:-3}
-      GUNICORN_WORKER_CLASS:       gevent
-      GUNICORN_WORKER_CONNECTIONS: 1000
+      GUNICORN_WORKERS:            ${GUNICORN_WORKERS_OPT:-4}
+      GUNICORN_THREADS:            ${GUNICORN_THREADS_OPT:-4}
+      GUNICORN_WORKER_CLASS:       gthread
       GUNICORN_TIMEOUT:            ${GUNICORN_TIMEOUT:-120}
       INSTANCE_ID:                 backend_1
 
@@ -151,9 +151,9 @@ services:
       JWT_SECRET:                  ${JWT_SECRET}
       JWT_EXPIRES:                 ${JWT_EXPIRES}
       PORT:                        5000
-      GUNICORN_WORKERS:            ${GUNICORN_WORKERS_OPT:-3}
-      GUNICORN_WORKER_CLASS:       gevent
-      GUNICORN_WORKER_CONNECTIONS: 1000
+      GUNICORN_WORKERS:            ${GUNICORN_WORKERS_OPT:-4}
+      GUNICORN_THREADS:            ${GUNICORN_THREADS_OPT:-4}
+      GUNICORN_WORKER_CLASS:       gthread
       GUNICORN_TIMEOUT:            ${GUNICORN_TIMEOUT:-120}
       INSTANCE_ID:                 backend_2
 

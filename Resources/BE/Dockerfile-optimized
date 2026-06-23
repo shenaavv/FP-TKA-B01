@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy requirements first (for layer caching)
 COPY requirements-optimized.txt .
 
-# Install Python dependencies (including gevent)
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements-optimized.txt
 
 # Copy optimized application code
@@ -27,13 +27,15 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD curl -f http://localhost:5000/health || exit 1
 
-# Run Gunicorn with gevent worker
-# gevent: async I/O — setiap worker handle ribuan greenlet concurrent
-# worker-connections: max greenlet per worker (default 1000)
+# Run Gunicorn dengan gthread worker
+# gthread: thread pool per worker, kompatibel dengan pymongo 4.x
+# Gevent TIDAK digunakan karena conflict dengan pymongo background threads
+# 4 workers × 4 threads = 16 concurrent slots per instance
+# 2 instance × 16 = 32 concurrent slots total (vs baseline: 16)
 CMD ["sh", "-c", "gunicorn \
-    --workers ${GUNICORN_WORKERS:-3} \
-    --worker-class ${GUNICORN_WORKER_CLASS:-gevent} \
-    --worker-connections ${GUNICORN_WORKER_CONNECTIONS:-1000} \
+    --workers ${GUNICORN_WORKERS:-4} \
+    --threads ${GUNICORN_THREADS:-4} \
+    --worker-class ${GUNICORN_WORKER_CLASS:-gthread} \
     --timeout ${GUNICORN_TIMEOUT:-120} \
     --bind 0.0.0.0:5000 \
     --access-logfile - \
