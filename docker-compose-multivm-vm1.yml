@@ -52,9 +52,8 @@ services:
       GUNICORN_TIMEOUT:      ${GUNICORN_TIMEOUT:-120}
       INSTANCE_ID:           backend_1
 
-    # Tidak expose ke publik — hanya Nginx di VM1 yang akses via 127.0.0.1:5000
-    ports:
-      - "127.0.0.1:5000:5000"
+    # Tidak expose ke publik — Nginx akses via Docker network (backend_1:5000)
+    # ports: tidak diperlukan karena nginx dan backend_1 di jaringan Docker yang sama
 
     networks:
       - app_net_vm1
