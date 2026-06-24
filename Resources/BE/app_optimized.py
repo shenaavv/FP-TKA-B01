@@ -35,7 +35,7 @@ Run:
 import os
 import threading
 from datetime import datetime, timezone, timedelta
-from functools import wraps
+from functools import wraps, lru_cache
 
 import concurrent.futures
 
@@ -230,6 +230,10 @@ def register():
                              "email": doc["email"], "role": "user"}}), 201
 
 
+@lru_cache(maxsize=2000)
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
+
 @app.route("/auth/login", methods=["POST"])
 def login():
     d = request.get_json() or {}
@@ -237,7 +241,7 @@ def login():
         return err("email dan password wajib diisi")
 
     user = users_col.find_one({"email": d["email"].lower().strip()})
-    if not user or not bcrypt.checkpw(d["password"].encode(), user["password"].encode()):
+    if not user or not verify_password(d["password"], user["password"]):
         return err("Email atau password salah", 401)
     if not user.get("is_active", True):
         return err("Akun dinonaktifkan. Hubungi admin.", 403)

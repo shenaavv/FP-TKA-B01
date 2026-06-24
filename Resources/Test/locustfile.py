@@ -33,14 +33,13 @@ class CustomerUser(HttpUser):
                 r_login = self.client.post("/auth/login", json={
                     "email": "admin1@tka.its.ac.id",
                     "password": "Admin@12345"
-                }, name="/auth/login [init-admin]", timeout=10)
+                }, name="/auth/login [init-admin]")
                 if r_login.status_code == 200:
                     admin_token = r_login.json().get("token")
                     r_users = self.client.get(
                         "/admin/users?limit=100&role=user",
                         headers={"Authorization": f"Bearer {admin_token}"},
-                        name="/admin/users [init]",
-                        timeout=10
+                        name="/admin/users [init]"
                     )
                     if r_users.status_code == 200:
                         USER_EMAILS_CACHE = [
@@ -54,14 +53,14 @@ class CustomerUser(HttpUser):
                 with self.client.post("/auth/login", json={
                     "email":    email,
                     "password": "User@12345"
-                }, catch_response=True, name="/auth/login [user]", timeout=10) as res:
+                }, catch_response=True, name="/auth/login [user]") as res:
                     if res.status_code == 200:
                         self.token = res.json().get("token")
                     res.success()   # jangan count sebagai failure apapun hasilnya
 
             # ── Ambil daftar produk sekali di awal ──
             if not PRODUCTS_CACHE:
-                r = self.client.get("/products?limit=50", name="/products [init]", timeout=10)
+                r = self.client.get("/products?limit=50", name="/products [init]")
                 if r.status_code == 200:
                     PRODUCTS_CACHE = [p["_id"] for p in r.json().get("data", [])]
         except Exception:
@@ -159,7 +158,7 @@ class AdminUser(HttpUser):
             with self.client.post("/auth/login", json={
                 "email":    f"admin{idx}@tka.its.ac.id",
                 "password": "Admin@12345"
-            }, catch_response=True, name="/auth/login [admin]", timeout=10) as res:
+            }, catch_response=True, name="/auth/login [admin]") as res:
                 if res.status_code == 200:
                     self.token = res.json().get("token")
                     res.success()
