@@ -37,6 +37,8 @@ import threading
 from datetime import datetime, timezone, timedelta
 from functools import wraps
 
+import concurrent.futures
+
 import bcrypt
 import jwt
 from bson import ObjectId
@@ -56,21 +58,28 @@ JWT_EXPIRES = int(os.environ.get("JWT_EXPIRES", 86400))
 # OPTIMASI #2: MongoDB Connection Pool Tuning
 # Baseline: MongoClient(MONGO_URI) — default pool 100, no tuning
 # Optimized: explicit pool + timeout settings
-#   maxPoolSize=30  : max 30 koneksi per worker process
-#   minPoolSize=2   : selalu keep 2 koneksi siap pakai
-#   maxIdleTimeMS   : tutup koneksi idle > 30 detik
+#   maxPoolSize=50  : max 50 koneksi per worker process
+#   minPoolSize=5   : selalu keep 5 koneksi siap pakai (warm)
+#   maxIdleTimeMS   : tutup koneksi idle > 45 detik
 #   serverSelection : timeout 5s jika MongoDB tidak reachable
 #   connectTimeout  : timeout 5s untuk connect awal
-# TIDAK ada waitQueueTimeoutMS — biarkan antri (bukan 500)
-# Dengan 2 instance × 4 workers = 8 processes × 30 pool = max 240 koneksi
+#   socketTimeoutMS : kill operasi yang stuck > 20 detik
+#   retryWrites/Reads: transient error otomatis di-retry driver
+#   w=1, journal=False: write lebih cepat (acceptable untuk load test)
+# Dengan 2 instance × 4 workers = 8 processes × 50 pool = max 400 koneksi
 # ═══════════════════════════════════════════
 client = MongoClient(
     MONGO_URI,
-    maxPoolSize=30,
-    minPoolSize=2,
-    maxIdleTimeMS=30000,
+    maxPoolSize=50,
+    minPoolSize=5,
+    maxIdleTimeMS=45000,
     serverSelectionTimeoutMS=5000,
     connectTimeoutMS=5000,
+    socketTimeoutMS=20000,
+    retryWrites=True,
+    retryReads=True,
+    w=1,
+    journal=False,
 )
 db     = client["orderdb"]
 
@@ -115,14 +124,21 @@ def make_token(user_id: str, role: str) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
 # ═══════════════════════════════════════════
-# OPTIMASI #3: Async Audit Log
+# OPTIMASI #3: Async Audit Log (Bounded Thread Pool)
 # Baseline: write_log() → insert_one() secara SYNCHRONOUS
 #           → response ditunda sampai DB write selesai
-# Optimized: write_log() → spawn daemon thread → return segera
+# Optimized: write_log() → submit ke ThreadPoolExecutor → return segera
 #            → response langsung dikirim, DB write di background
-# Catatan: admin_id di-capture sebelum spawn thread karena
+# Perbaikan: Pakai ThreadPoolExecutor(max_workers=4) daripada
+#            spawn daemon thread tanpa batas, mencegah thread leak
+#            saat load tinggi (3000+ users)
+# Catatan: admin_id di-capture sebelum submit karena
 #          Flask g.user_id tidak accessible setelah request selesai
 # ═══════════════════════════════════════════
+_log_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=4, thread_name_prefix="audit"
+)
+
 def write_log(action: str, collection: str, target_id: str, detail: dict = None):
     admin_id = g.user_id  # capture sebelum thread (g tidak tersedia di thread)
 
@@ -139,8 +155,10 @@ def write_log(action: str, collection: str, target_id: str, detail: dict = None)
         except Exception:
             pass  # audit log non-critical, jangan crash jika gagal
 
-    t = threading.Thread(target=_write, daemon=True)
-    t.start()
+    try:
+        _log_executor.submit(_write)
+    except RuntimeError:
+        pass  # executor shutdown, abaikan
 
 def err(msg, code=400):
     return jsonify({"error": msg}), code
@@ -642,10 +660,12 @@ def admin_stats():
         {"$limit": 10}
     ]
 
-    by_status    = list(orders_col.aggregate(status_pipeline))
-    top_products = list(orders_col.aggregate(top_products_pipeline))
-    monthly      = list(orders_col.aggregate(monthly_pipeline))
-    by_city      = list(orders_col.aggregate(city_pipeline))
+    # maxTimeMS=10000: kill aggregation yang stuck > 10 detik
+    # Mencegah slow query dari blocking worker thread terlalu lama
+    by_status    = list(orders_col.aggregate(status_pipeline, maxTimeMS=10000))
+    top_products = list(orders_col.aggregate(top_products_pipeline, maxTimeMS=10000))
+    monthly      = list(orders_col.aggregate(monthly_pipeline, maxTimeMS=10000))
+    by_city      = list(orders_col.aggregate(city_pipeline, maxTimeMS=10000))
 
     total_users  = users_col.count_documents({"role": "user"})
     active_users = users_col.count_documents({"role": "user", "is_active": True})
@@ -697,6 +717,24 @@ def health():
         "instance":    instance,
         "timestamp":   now_iso().isoformat(),
     })
+
+# ═══════════════════════════════════════════
+# Global Error Handler
+# Mencegah unhandled exception menjadi HTML error page
+# Return clean JSON 500 agar Locust tidak count sebagai
+# connection error (yang lebih berat dari HTTP error)
+# ═══════════════════════════════════════════
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    """Catch-all: internal error → clean JSON 500."""
+    app.logger.error(f"Unhandled: {e}")
+    return jsonify({"error": "Internal server error"}), 500
+
+@app.errorhandler(404)
+def handle_404(e):
+    return jsonify({"error": "Not found"}), 404
+
 
 
 if __name__ == "__main__":

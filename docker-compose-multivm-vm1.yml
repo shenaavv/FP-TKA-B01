@@ -68,9 +68,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2G
+          memory: 3G
         reservations:
-          memory: 256M
+          memory: 512M
 
   # ──────────────────────────────────────────────────
   # Nginx — Load Balancer + Reverse Proxy + Cache
