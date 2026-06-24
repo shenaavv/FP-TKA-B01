@@ -1,4 +1,4 @@
-# =====================================================
+l# =====================================================
 # docker-compose-baseline-optimized.yml
 # FP-TKA-B01 — Optimized Config: 1 VM + Internal LB
 # VM: DigitalOcean Droplet — 4 vCPU, 8 GB RAM, 160 GB
