@@ -521,3 +521,190 @@ Proyek ini mendemonstrasikan evolusi arsitektur deployment cloud melalui tiga ta
 
 **Multi-VM Optimized** menyelesaikan bottleneck terakhir dengan mendedikasikan MongoDB pada VM tersendiri. Dengan tambahan biaya $24/bulan (total $72/bulan, masih dalam anggaran), MongoDB mendapatkan CPU dan RAM dedicated, sehingga query agregasi berat tidak lagi terganggu oleh beban backend. Arsitektur ini juga memberikan keandalan yang lebih baik melalui isolasi komponen lintas VM dan kemudahan scale horizontal di masa mendatang.
 
+## Future Improvements
+
+Pada bagian ini mengidentifikasi peningkatan yang dapat dilakukan berdasarkan bottleneck yang ditemukan selama implementasi dan pengujian ketiga konfigurasi (Baseline, Baseline Optimized, Multi-VM Optimized), serta keterbatasan arsitektur yang masih tersisa hingga akhir proyek. Setiap improvement diurutkan berdasarkan prioritas implementasi.
+
+---
+
+### 1. Penggantian Worker Class ke Gevent pada Backend Flask
+
+#### Latar Belakang
+
+Berdasarkan komentar eksplisit dalam `Resources/BE/app_optimized.py`, implementasi aktual menggunakan worker class `gthread` (bukan `gevent`) karena konflik kompatibilitas antara gevent monkey patching dengan background threads internal PyMongo 4.x (Monitor thread dan Pool Maintenance thread). Komentar dalam kode menyebutkan: *"pymongo 4.x memiliki background threads internal (Monitor, Pool Maintenance) yang tidak kompatibel dengan gevent greenlets."* Akibatnya, kapasitas konkuren sistem tetap terbatas pada model thread (32 slot total pada konfigurasi optimized dan multi-VM) dan tidak dapat memanfaatkan model concurrency berbasis greenlet yang jauh lebih ringan.
+
+#### Solusi yang Diusulkan
+
+Melakukan investigasi lebih mendalam terhadap versi PyMongo yang kompatibel dengan gevent, atau menggunakan Motor (MongoDB driver asinkron berbasis asyncio) sebagai pengganti PyMongo sinkron. Alternatif lain adalah mengadopsi framework asinkron secara menyeluruh, yaitu mengganti Flask dengan FastAPI atau Starlette yang mendukung `async/await` secara native, kemudian menggunakan Motor sebagai driver database. Perubahan ini memungkinkan penerapan Gunicorn dengan worker class `uvicorn.workers.UvicornWorker` atau langsung menggunakan Uvicorn, sehingga setiap worker dapat menangani ribuan koneksi konkuren.
+
+#### Dampak yang Diharapkan
+
+Peningkatan kapasitas konkuren secara signifikan tanpa perlu menambah jumlah instance atau VM. Sistem dapat menyerap lonjakan traffic (spike) yang melebihi jumlah worker thread yang tersedia saat ini, dan response time pada kondisi beban tinggi akan lebih stabil karena tidak ada antrian yang menunggu slot thread kosong.
+
+#### Prioritas
+
+**Tinggi** Kendala ini secara langsung membatasi kapasitas konkuren sistem pada semua konfigurasi yang telah diuji.
+
+---
+
+### 2. MongoDB Replica Set untuk High Availability Database
+
+#### Latar Belakang
+
+Pada seluruh konfigurasi yang diimplementasikan (Baseline, Optimized, Multi-VM), MongoDB berjalan sebagai single node (standalone). Pada konfigurasi Multi-VM, MongoDB memang mendapat dedicated VM (VM-3), namun tetap merupakan single point of failure: apabila VM-3 atau container MongoDB mengalami gangguan, seluruh layanan tidak dapat memproses transaksi. File konfigurasi `docker-compose-multivm-vm3.yml` tidak mengandung konfigurasi replica set. Tidak terdapat konfigurasi `replicaSet` maupun `rs.init()` dalam seluruh file repository.
+
+#### Solusi yang Diusulkan
+
+Mengkonfigurasi MongoDB Replica Set dengan minimal 3 node: satu Primary dan dua Secondary. Dalam konteks arsitektur Multi-VM yang sudah ada, Primary dapat ditempatkan di VM-3 yang sudah ada, sementara Secondary dapat dijalankan sebagai container tambahan di VM-1 dan VM-2 yang memiliki headroom memori. URI koneksi pada semua backend perlu diperbarui dengan menambahkan parameter `replicaSet=rs0` dan `readPreference=secondaryPreferred` agar operasi baca dapat didistribusikan ke node Secondary.
+
+#### Dampak yang Diharapkan
+
+Eliminasi single point of failure pada lapisan database. Apabila Primary mengalami gangguan, salah satu Secondary akan terpilih sebagai Primary baru secara otomatis melalui mekanisme election MongoDB (dalam waktu sekitar 10–30 detik). Operasi baca dapat didistribusikan ke Secondary, mengurangi beban Primary, khususnya untuk endpoint baca seperti `GET /products` dan `GET /orders`.
+
+#### Prioritas
+
+**Tinggi** MongoDB standalone merupakan single point of failure yang paling kritis dalam arsitektur saat ini, terutama setelah komponen lain sudah memiliki redundansi (dua backend instance).
+
+---
+
+### 3. Gevent Worker Connections pada Optimized Worker Class
+
+#### Latar Belakang
+
+Dalam konfigurasi Baseline Optimized, dokumen `config-baseline-optimized.md` mencatat rencana penggunaan `gevent` dengan `worker_connections=1000` per worker (potensi 6.000+ greenlet). Namun implementasi aktual yang terdapat dalam `docker-compose-baseline-optimized.yml` menggunakan `gthread` dengan 4 workers x 4 threads = 16 slot per instance, atau 32 slot total untuk dua instance. Celah antara kapasitas yang direncanakan (6.000+ greenlet) dan yang diimplementasikan (32 thread slots) sangat besar dan belum teratasi.
+
+#### Solusi yang Diusulkan
+
+Mengganti driver database dari PyMongo sinkron ke Motor (motor==3.x) sebagai prasyarat utama. Setelah itu, mengubah framework dari Flask sinkron ke FastAPI (dengan Starlette), lalu menjalankan server dengan Uvicorn workers. Hal ini memungkinkan penerapan model truly-async tanpa konflik dengan driver database, berbeda dengan gevent monkey patching yang bermasalah dengan PyMongo 4.x.
+
+#### Dampak yang Diharapkan
+
+Satu worker process dapat menangani ratusan hingga ribuan koneksi konkuren, sehingga kebutuhan jumlah instance dan VM dapat berkurang, atau dengan jumlah VM yang sama dapat melayani beban traffic yang jauh lebih besar.
+
+#### Prioritas
+
+**Tinggi** Merupakan prasyarat teknis dari improvement nomor 1 di atas, dan berdampak langsung pada kapasitas layanan.
+
+---
+
+### 4. Nginx Proxy Cache Invalidation yang Terkontrol
+
+#### Latar Belakang
+
+Implementasi Nginx proxy cache pada konfigurasi Optimized dan Multi-VM menggunakan TTL (Time to Live) tetap: 30 detik untuk `GET /products` dan 60 detik untuk `GET /products/<id>`. Tidak ada mekanisme cache invalidation aktif ketika data produk diperbarui melalui endpoint `PUT /products/<id>` atau `DELETE /products/<id>`. Akibatnya, setelah admin melakukan pembaruan produk, pengguna masih akan melihat data lama selama maksimal 60 detik hingga cache kadaluarsa secara alami.
+
+#### Solusi yang Diusulkan
+
+Mengimplementasikan aktif cache invalidation menggunakan dua pendekatan yang dapat digabungkan. Pertama, menambahkan header `Cache-Control: no-cache` pada response dari endpoint `PUT` dan `DELETE` untuk produk. Kedua, dari sisi backend optimized (`app_optimized.py`), setelah operasi write berhasil, mengirim request ke Nginx untuk membersihkan cache melalui endpoint khusus (nginx `proxy_cache_purge` dengan modul `ngx_cache_purge`). Pendekatan lain yang lebih sederhana adalah mempersingkat TTL cache menjadi 5–10 detik untuk meminimalkan staleness tanpa memerlukan modul tambahan.
+
+#### Dampak yang Diharapkan
+
+Data yang ditampilkan ke pengguna akan lebih akurat segera setelah admin melakukan perubahan, tanpa harus menunggu TTL cache habis. Ini penting untuk konsistensi data pada platform e-commerce di mana harga dan ketersediaan produk dapat berubah sewaktu-waktu.
+
+#### Prioritas
+
+**Sedang** Berdampak pada konsistensi data, namun dalam konteks load testing akademis ini tidak menjadi faktor penilaian utama.
+
+---
+
+### 5. Monitoring dan Observabilitas Terpusat
+
+#### Latar Belakang
+
+Pemantauan resource selama pengujian dilakukan secara manual menggunakan `htop` atau monitoring bawaan DigitalOcean (terlihat dari screenshot resource di folder `Report/baseline/` dan `Report/optimized/`). Tidak ditemukan konfigurasi monitoring otomatis seperti Prometheus, Grafana, atau sistem logging terpusat dalam repository. Pada arsitektur Multi-VM dengan tiga VM terpisah, pemantauan manual semakin tidak praktis karena engineer harus memantau tiga terminal berbeda secara bersamaan. Locust file juga tidak mengekspor metrik ke sistem eksternal.
+
+#### Solusi yang Diusulkan
+
+Menambahkan stack monitoring menggunakan Prometheus dan Grafana yang di-deploy sebagai container Docker tambahan. Untuk Flask, menambahkan library `prometheus-flask-exporter` ke `requirements-optimized.txt` agar metrik per-endpoint (request count, latency histogram, error rate) tersedia di `/metrics`. Untuk MongoDB, menggunakan `mongodb-exporter`. Nginx dapat diekspor menggunakan `nginx-prometheus-exporter`. Pada arsitektur Multi-VM, Prometheus dapat berjalan di VM-1 dan melakukan scraping ke semua node melalui VPC private network.
+
+#### Dampak yang Diharapkan
+
+Visibilitas real-time terhadap performa seluruh komponen tanpa perlu memantau setiap VM secara manual. Data historis tersedia untuk analisis regresi performa dan deteksi anomali. Dashboard Grafana dapat menampilkan RPS, response time per endpoint, error rate, CPU/memory per VM, dan MongoDB operation rate dalam satu tampilan terintegrasi.
+
+#### Prioritas
+
+**Sedang** Sangat membantu dalam iterasi pengembangan dan debugging, namun tidak memblokir fungsionalitas sistem saat ini.
+
+---
+
+### 6. Centralized Logging
+
+#### Latar Belakang
+
+Log dari tiga komponen berbeda (Nginx access log, Gunicorn/Flask application log, dan MongoDB log) terpisah di masing-masing container dan masing-masing VM. Pada konfigurasi Multi-VM dengan tiga VM terpisah, debugging insiden memerlukan akses SSH ke beberapa VM dan pencarian log secara manual. Nginx pada konfigurasi Optimized dan Multi-VM memang sudah menambahkan `cache=$upstream_cache_status` ke format log, namun log ini hanya dapat diakses dari dalam container Nginx.
+
+#### Solusi yang Diusulkan
+
+Mengimplementasikan stack ELK (Elasticsearch, Logstash, Kibana) atau alternatif yang lebih ringan seperti Loki + Grafana, dikombinasikan dengan Promtail sebagai log shipper. Mengingat keterbatasan anggaran ($75/bulan), Loki + Promtail lebih sesuai karena jauh lebih hemat sumber daya dibandingkan Elasticsearch. Seluruh log dari tiga VM dapat dikirim ke satu instance Loki yang berjalan di VM-1.
+
+#### Dampak yang Diharapkan
+
+Kemampuan melakukan pencarian log terpusat dari semua komponen dan semua VM melalui satu antarmuka (Grafana). Deteksi pola error lebih cepat, terutama untuk error yang terdistribusi antara Nginx, backend_1, dan backend_2 dalam satu alur request.
+
+#### Prioritas
+
+**Sedang** Mengurangi overhead operasional secara signifikan pada arsitektur multi-VM.
+
+---
+
+### 7. Infrastructure as Code dengan Docker Compose dan Provisioning Script
+
+#### Latar Belakang
+
+Proses deployment saat ini memerlukan serangkaian langkah manual yang harus dilakukan secara berurutan di tiga VM berbeda (VM-3 pertama, VM-2 kedua, VM-1 terakhir), sesuai instruksi dalam `config-multivm-optimized.md`. Meskipun file Docker Compose sudah tersedia untuk masing-masing VM, proses instalasi Docker, konfigurasi firewall DigitalOcean, pengisian `.env`, dan penggantian variabel `VM2_PRIVATE_IP` masih bersifat manual. File `nginx-multivm.conf` menggunakan pendekatan `envsubst` untuk substitusi variabel, namun proses ini harus diinisiasi secara manual.
+
+#### Solusi yang Diusulkan
+
+Membuat shell script provisioning terpadu atau Makefile yang mengotomatiskan seluruh proses deployment Multi-VM secara berurutan dari satu mesin kontrol. Langkah-langkah yang dapat diotomatiskan meliputi: pembuatan `.env` per VM, distribusi file konfigurasi via SCP, eksekusi `docker compose up` melalui SSH, dan verifikasi health check. Jika ingin lebih komprehensif, Ansible playbook dapat digunakan untuk menggantikan skrip shell, dengan inventory yang mendefinisikan tiga VM sebagai group `nginx`, `backend`, dan `mongodb`.
+
+#### Dampak yang Diharapkan
+
+Proses deployment yang saat ini memerlukan pengerjaan manual di tiga terminal terpisah dapat diselesaikan dengan satu perintah. Mengurangi risiko human error dalam pengisian IP dan konfigurasi antar VM. Memungkinkan re-deployment cepat apabila VM perlu diganti atau sistem perlu di-reset.
+
+#### Prioritas
+
+**Rendah** Meningkatkan efisiensi operasional, namun arsitektur fungsional sudah dapat berjalan dengan proses manual yang ada.
+
+---
+
+### 8. Horizontal Auto Scaling Backend
+
+#### Latar Belakang
+
+Arsitektur Multi-VM memiliki dua backend instance yang jumlahnya tetap (static scaling): `backend_1` di VM-1 dan `backend_2` di VM-2. Konfigurasi Nginx upstream di `nginx-multivm.conf` mendefinisikan kedua server secara statis. Penambahan backend instance ketiga memerlukan perubahan manual pada file `nginx-multivm.conf` di VM-1, deploy ulang VM baru, dan restart Nginx. Tidak ada mekanisme auto scaling yang merespons perubahan beban traffic secara otomatis.
+
+#### Solusi yang Diusulkan
+
+Untuk skala kecil dalam anggaran yang ada, dapat diimplementasikan semi-auto scaling menggunakan skrip yang memantau CPU/memory dan menambahkan entri upstream ke konfigurasi Nginx melalui `nginx -s reload`. Untuk solusi yang lebih komprehensif, mengadopsi Kubernetes (K3s sebagai distribusi ringan) dengan Horizontal Pod Autoscaler (HPA) yang merespons metrik CPU atau custom metric (RPS dari Prometheus). Namun, Kubernetes memerlukan sumber daya VM tambahan di luar anggaran $75/bulan yang ada.
+
+#### Dampak yang Diharapkan
+
+Kapasitas backend dapat menyesuaikan diri secara otomatis terhadap perubahan beban, baik scale-out saat traffic tinggi maupun scale-in untuk efisiensi biaya saat traffic rendah. Ini penting untuk skenario flash sale yang merupakan konteks soal proyek ini.
+
+#### Prioritas
+
+**Rendah** Relevan untuk deployment produksi, namun melebihi anggaran dan kompleksitas yang ditetapkan dalam batasan proyek akademis ini.
+
+---
+
+## Final Recommendations
+
+Berdasarkan implementasi aktual, hasil konfigurasi yang ditemukan dalam repository, dan keterbatasan anggaran $75/bulan, berikut adalah rekomendasi akhir untuk pengembangan sistem ke depan.
+
+**Rekomendasi untuk Deployment Langsung (Immediate)**
+
+Konfigurasi Multi-VM Optimized adalah arsitektur terbaik yang berhasil diimplementasikan dalam proyek ini dan direkomendasikan sebagai konfigurasi produksi dalam batas anggaran yang ditetapkan. Isolasi MongoDB pada VM dedicated menyelesaikan bottleneck resource contention yang tidak dapat diatasi pada konfigurasi single-VM. Dengan sisa anggaran sebesar Rp148.000/bulan (sekitar $9/bulan), masih terdapat ruang untuk menambahkan satu VM kecil ($6/bulan) sebagai Prometheus dan Grafana monitoring node, yang akan memberikan visibilitas operasional yang jauh lebih baik dibandingkan pemantauan manual saat ini.
+
+**Rekomendasi untuk Peningkatan Performa (Short Term)**
+
+Prioritas teknis tertinggi adalah migrasi dari PyMongo sinkron ke Motor (driver asinkron) dan dari Flask ke FastAPI, yang memungkinkan penggunaan Uvicorn workers. Perubahan ini secara teoritis dapat meningkatkan kapasitas konkuren dari 32 slot thread menjadi ribuan koneksi async per instance tanpa penambahan VM. Ini adalah satu-satunya cara untuk melampaui batasan konkuren yang saat ini menjadi ceiling performa sistem. Namun, migrasi ini memerlukan penulisan ulang seluruh kode backend (`app_optimized.py`) dan pengujian regresi menyeluruh pada semua 20+ endpoint API.
+
+**Rekomendasi untuk Keandalan (Medium Term)**
+
+Konfigurasi MongoDB Replica Set dengan minimal 3 node adalah peningkatan keandalan yang paling mendesak. Tanpa replica set, kegagalan VM-3 (atau container MongoDB di dalamnya) akan mengakibatkan downtime total seluruh layanan. Dalam arsitektur 3-VM yang ada, Secondary dapat ditempatkan di VM-1 dan VM-2 yang memiliki headroom memori cukup (estimasi 1.5–3 GB tersisa per VM berdasarkan konfigurasi docker-compose). Implementasi ini tidak memerlukan biaya infrastruktur tambahan, namun memerlukan konfigurasi ulang MongoDB dan pembaruan connection string di semua backend.
+
+**Rekomendasi untuk Skalabilitas (Long Term)**
+
+Apabila platform e-commerce ini direncanakan untuk menangani traffic yang jauh lebih besar (ribuan pengguna konkuren), arsitektur harus bergerak ke arah Kubernetes (K3s) dengan Horizontal Pod Autoscaler, CDN untuk asset statis, dan pemisahan Redis sebagai cache layer yang berdiri sendiri. Namun, perubahan ini memerlukan anggaran infrastruktur yang jauh melampaui $75/bulan dan berada di luar cakupan proyek akademis ini.
+
+---
