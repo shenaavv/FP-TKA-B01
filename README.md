@@ -327,19 +327,46 @@ flowchart LR
 
 ![Resource Utilization Optimized Skenario 1](Report/optimized/try_2/Resources.png)
 
+**Skenario 2 — Peak Concurrency Spawn Rate 50**
+
+![Hasil Locust Optimized Skenario 2](Report\optimized\try_2\image.pngg)
+
+*Grafik hasil Locust — Skenario 2 Optimized*
+
+![Resource Utilization Optimized Skenario 1](Report\optimized\try_2\Resources.png)
+
 *Utilisasi resource server — Skenario 2 Optimized*
 
 **Skenario 3 — Peak Concurrency Spawn Rate 100**
 
+![Hasil Locust Optimized Skenario 3](Report\optimized\try_3\image.png)
+
+*Grafik hasil Locust — Skenario 3 Optimized*
+
 ![Resource Utilization Optimized Skenario 3](Report/optimized/try_3/Resources.png)
 
 *Utilisasi resource server — Skenario 3 Optimized*
+
+**Skenario 4 — Peak Concurrency Spawn Rate 200**
+
+<img width="1286" height="752" alt="image" src="https://github.com/user-attachments/assets/de09bb73-b2c9-4f56-ba0a-746a3c66beda" />
+
+*Grafik hasil Locust — Skenario 4 Optimized*
+
+<img width="1708" height="962" alt="image" src="https://github.com/user-attachments/assets/8d5b37f6-aafc-4898-a096-d7f5b0130d4f" />
+
+*Utilisasi resource server — Skenario 4 Optimized*
 
 **Skenario 5 — Peak Concurrency Spawn Rate 500**
 
 ![Hasil Locust Optimized Skenario 5](Report/optimized/try_5/image.png)
 
 *Grafik hasil Locust — Skenario 5 Optimized*
+
+<img width="1716" height="969" alt="image" src="https://github.com/user-attachments/assets/3b4418dd-275e-4b87-b373-7a48dea7df44" />
+
+*Utilisasi resource server — Skenario 4 Optimized*
+
 
 ### Temuan Utama dan Evaluasi
 
