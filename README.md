@@ -182,25 +182,35 @@ flowchart LR
 ![Hasil Locust Skenario 1](Report/baseline/try_1/image-1.png)
 ![Resource Utilization Skenario 1](Report/baseline/try_1/resource.png)
 
+Sistem baseline mencapai **RPS puncak 17.31** dengan Failures/s: 0. Response time terus meningkat seiring bertambahnya user — 50th percentile mencapai 24.000 ms dan 95th percentile 27.000 ms — menunjukkan antrian panjang namun belum menyebabkan kegagalan.
+
 **Skenario 2 — Peak Concurrency Spawn Rate 50**
 
 ![Hasil Locust Skenario 2](Report/baseline/try_2/image.png)
 ![Resource Utilization Skenario 2](Report/baseline/try_2/resource.png)
+
+Dengan spawn rate 50 user/detik, concurrent user tertinggi sebelum failure adalah **1.100 user** (Failures/s: 0). RPS tercatat 12.81 dengan 50th percentile 14.000 ms dan 95th percentile 18.000 ms.
 
 **Skenario 3 — Peak Concurrency Spawn Rate 100**
 
 ![Hasil Locust Skenario 3](Report/baseline/try_3/image-2.png)
 ![Resource Utilization Skenario 3](Report/baseline/try_3/resource.png)
 
+Dengan spawn rate lebih tinggi, sistem mengalami saturasi lebih cepat. Concurrent user tertinggi sebelum failure adalah **600 user** dengan RPS 10.97, 50th percentile 3.000 ms, dan 95th percentile 5.600 ms.
+
 **Skenario 4 — Peak Concurrency Spawn Rate 200**
 
 ![Hasil Locust Skenario 4](Report/baseline/try_4/image-3.png)
 ![Resource Utilization Skenario 4](Report/baseline/try_4/resource.png)
 
+Pada spawn rate 200 user/detik, sistem menunjukkan batas yang serupa dengan skenario 3 — **600 concurrent user** sebagai titik tertinggi sebelum failure, dengan RPS 10.97. Spawn rate yang sangat agresif tidak memberikan waktu bagi sistem untuk menstabilkan antrian.
+
 **Skenario 5 — Peak Concurrency Spawn Rate 500**
 
 ![Hasil Locust Skenario 5](Report/baseline/try_5/image-4.png)
 ![Resource Utilization Skenario 5](Report/baseline/try_5/resource.png)
+
+Dengan spawn rate 500 user/detik, pada titik **1.500 concurrent user** sistem masih mencatat Failures/s: 0 namun RPS turun drastis ke **1.5** — mengindikasikan kondisi saturasi penuh. Response time 50th percentile 1.400 ms dan 95th percentile 1.900 ms sebelum beban terus menumpuk dan menyebabkan kegagalan.
 
 ## Temuan & Keterbatasan
 
@@ -280,6 +290,43 @@ flowchart LR
 | MongoDB indexes | Tidak ada | 13 index custom |
 | MongoDB connection pool | Default | maxPoolSize=20, timeout tuned |
 | Audit log | Synchronous | Asynchronous (daemon thread) |
+
+## Hasil Pengujian
+
+**Skenario 1 — Maksimum RPS (0% Failure)**
+
+![Hasil Locust Skenario 1](Report/baseline_v2/try_1/image.png)
+![Resource Utilization Skenario 1](Report/baseline_v2/try_1/Resources.png)
+
+RPS tertinggi yang dicapai adalah **15.58** dengan Failures/s: 0 — sedikit lebih rendah dari baseline (17.31). Overhead koordinasi dua backend instance dan load balancer menambah latensi pada setiap request. 50th percentile mencapai 19.000 ms dan 95th percentile 23.000 ms.
+
+**Skenario 2 — Peak Concurrency Spawn Rate 50**
+
+![Hasil Locust Skenario 2](Report/baseline_v2/try_2/image.png)
+![Resource Utilization Skenario 2](Report/baseline_v2/try_2/Resources.png)
+
+Failure mulai muncul saat mencapai **1.100 concurrent user** (Failures/s: 0.09), sehingga batas aman sistem ini berada di sekitar 1.000–1.050 user. RPS tercatat 9.39 dengan 50th percentile 13.000 ms dan 95th percentile 18.000 ms.
+
+**Skenario 3 — Peak Concurrency Spawn Rate 100**
+
+![Hasil Locust Skenario 3](Report/baseline_v2/try_3/image.png)
+![Resource Utilization Skenario 3](Report/baseline_v2/try_3/Resources.png)
+
+Sistem mampu menangani hingga **1.000 concurrent user** tanpa failure dengan RPS 10.19 — lebih baik dari baseline di spawn rate yang sama (600 user). 50th percentile 5.500 ms dan 95th percentile 8.800 ms.
+
+**Skenario 4 — Peak Concurrency Spawn Rate 200**
+
+![Hasil Locust Skenario 4](Report/baseline_v2/try_4/image.png)
+![Resource Utilization Skenario 4](Report/baseline_v2/try_4/Resource.png)
+
+Concurrent user tertinggi sebelum failure adalah **1.200 user** dengan Failures/s: 0 dan RPS 6.97. 50th percentile 3.200 ms dan 95th percentile 5.400 ms. Penambahan backend instance kedua memberikan sedikit peningkatan kapasitas dibanding baseline.
+
+**Skenario 5 — Peak Concurrency Spawn Rate 500**
+
+![Hasil Locust Skenario 5](Report/baseline_v2/try_5/image.png)
+![Resource Utilization Skenario 5](Report/baseline_v2/try_5/Resources.png)
+
+Sistem tahan hingga **7.500 concurrent user** dengan Failures/s: 0 dan RPS 7.94. 50th percentile 8.600 ms dan 95th percentile 13.000 ms. Proxy cache Nginx yang menyerap traffic read `/products` serta index MongoDB berperan dalam menjaga stabilitas pada beban ekstrem ini.
 
 ## Performa
 sangat disayangkan, ternyata hasil performanya tidak jauh berbeda dengan yang baseline, berikut alasannya
@@ -393,25 +440,35 @@ flowchart TD
 ![Hasil Locust Skenario 1](Report/optimized/try_1/result.png)
 ![Resource Utilization Skenario 1](Report/optimized/try_2/Resources.png)
 
+Lonjakan performa paling signifikan terlihat di sini. Sistem Multi-VM mencapai **RPS puncak 357.68** dengan Failures/s: 0 pada 1.000 concurrent user. Response time 50th percentile turun drastis ke **92 ms** dan 95th percentile **290 ms** — jauh berbeda dari baseline yang membutuhkan 24.000 ms. Pemisahan MongoDB ke VM dedicated menghilangkan resource contention yang menjadi bottleneck utama.
+
 **Skenario 2 — Peak Concurrency Spawn Rate 50**
 
 ![Hasil Locust Skenario 2](https://github.com/user-attachments/assets/b13f67cc-0531-48e6-98fb-450382f21f6c)
 ![Resource Utilization Skenario 2](https://github.com/user-attachments/assets/050aadda-3735-4ff3-9e89-1ac4d4b9c999)
+
+Sistem mampu melayani hingga **2.900 concurrent user** dengan Failures/s: 0 dan RPS 27.94. 50th percentile sangat rendah di 40 ms, namun 95th percentile mencapai 46.000 ms — distribusi bimodal antara request yang terlayani dari cache (cepat) dan yang harus antri ke backend (lambat).
 
 **Skenario 3 — Peak Concurrency Spawn Rate 100**
 
 ![Hasil Locust Skenario 3](https://github.com/user-attachments/assets/bfdbd82f-6939-4e30-97eb-86e15a2280ed)
 ![Resource Utilization Skenario 3](Report/optimized/try_3/Resources.png)
 
+Concurrent user tertinggi sebelum failure adalah **4.800 user** dengan RPS 10.64 dan Failures/s: 0. Baik 50th percentile (42.000 ms) maupun 95th percentile (43.000 ms) menunjukkan sistem dalam kondisi saturasi, namun semua request tetap terlayani tanpa kegagalan berkat isolasi resource antar VM.
+
 **Skenario 4 — Peak Concurrency Spawn Rate 200**
 
 ![Hasil Locust Skenario 4](https://github.com/user-attachments/assets/de09bb73-b2c9-4f56-ba0a-746a3c66beda)
 ![Resource Utilization Skenario 4](https://github.com/user-attachments/assets/8d5b37f6-aafc-4898-a096-d7f5b0130d4f)
 
+Pada spawn rate 200, batas tertinggi sebelum failure adalah **5.200 concurrent user** dengan RPS 20.49, 50th percentile 21.000 ms, dan 95th percentile 22.000 ms. Backend yang memiliki resource dedicated per VM mampu mengelola antrian lebih baik dibanding konfigurasi single VM.
+
 **Skenario 5 — Peak Concurrency Spawn Rate 500**
 
 ![Hasil Locust Skenario 5](https://github.com/user-attachments/assets/353832a2-1dd9-4ee3-b0a7-ef521709ecb4)
 ![Resource Utilization Skenario 5](https://github.com/user-attachments/assets/3b4418dd-275e-4b87-b373-7a48dea7df44)
+
+Skenario paling ekstrem menghasilkan RPS puncak **538.46** dengan Failures/s: 0 pada **11.500 concurrent user** — hasil terbaik di antara seluruh konfigurasi. Ini membuktikan bahwa isolasi komponen lintas VM adalah kunci scalability sistem ini.
 
 ## Keunggulan Dibanding Konfigurasi Sebelumnya
 
