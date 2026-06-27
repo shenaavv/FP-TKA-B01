@@ -359,7 +359,7 @@ flowchart LR
 
 **Skenario 5 — Peak Concurrency Spawn Rate 500**
 
-![Hasil Locust Optimized Skenario 5](Report/optimized/try_5/image.png)
+<img width="1648" height="1002" alt="image" src="https://github.com/user-attachments/assets/353832a2-1dd9-4ee3-b0a7-ef521709ecb4" />
 
 *Grafik hasil Locust — Skenario 5 Optimized*
 
