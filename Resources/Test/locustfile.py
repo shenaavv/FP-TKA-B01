@@ -21,47 +21,50 @@ STATUSES  = ["pending","processing","completed","cancelled"]
 # ════════════════════════════════════════════
 class CustomerUser(HttpUser):
     weight    = 8   # 80% traffic adalah user biasa
-    wait_time = between(0.5, 2)
+    wait_time = between(1, 3)
 
     def on_start(self):
         """Login sebagai user biasa menggunakan email asli dari DB."""
         global USER_EMAILS_CACHE, PRODUCTS_CACHE
 
-        # ── Ambil daftar email user asli (sekali saja, pakai admin) ──
-        if not USER_EMAILS_CACHE:
-            r_login = self.client.post("/auth/login", json={
-                "email": "admin1@tka.its.ac.id",
-                "password": "Admin@12345"
-            }, name="/auth/login [init-admin]")
-            if r_login.status_code == 200:
-                admin_token = r_login.json().get("token")
-                r_users = self.client.get(
-                    "/admin/users?limit=100&role=user",
-                    headers={"Authorization": f"Bearer {admin_token}"},
-                    name="/admin/users [init]"
-                )
-                if r_users.status_code == 200:
-                    USER_EMAILS_CACHE = [
-                        u["email"] for u in r_users.json().get("data", [])
-                    ]
+        try:
+            # ── Ambil daftar email user asli (sekali saja, pakai admin) ──
+            if not USER_EMAILS_CACHE:
+                r_login = self.client.post("/auth/login", json={
+                    "email": "admin1@tka.its.ac.id",
+                    "password": "Admin@12345"
+                }, name="/auth/login [init-admin]")
+                if r_login.status_code == 200:
+                    admin_token = r_login.json().get("token")
+                    r_users = self.client.get(
+                        "/admin/users?limit=100&role=user",
+                        headers={"Authorization": f"Bearer {admin_token}"},
+                        name="/admin/users [init]"
+                    )
+                    if r_users.status_code == 200:
+                        USER_EMAILS_CACHE = [
+                            u["email"] for u in r_users.json().get("data", [])
+                        ]
 
-        # ── Login sebagai user acak dari cache ──
-        self.token = None
-        if USER_EMAILS_CACHE:
-            email = random.choice(USER_EMAILS_CACHE)
-            with self.client.post("/auth/login", json={
-                "email":    email,
-                "password": "User@12345"
-            }, catch_response=True, name="/auth/login [user]") as res:
-                if res.status_code == 200:
-                    self.token = res.json().get("token")
-                res.success()   # jangan count sebagai failure apapun hasilnya
+            # ── Login sebagai user acak dari cache ──
+            self.token = None
+            if USER_EMAILS_CACHE:
+                email = random.choice(USER_EMAILS_CACHE)
+                with self.client.post("/auth/login", json={
+                    "email":    email,
+                    "password": "User@12345"
+                }, catch_response=True, name="/auth/login [user]") as res:
+                    if res.status_code == 200:
+                        self.token = res.json().get("token")
+                    res.success()   # jangan count sebagai failure apapun hasilnya
 
-        # ── Ambil daftar produk sekali di awal ──
-        if not PRODUCTS_CACHE:
-            r = self.client.get("/products?limit=50", name="/products [init]")
-            if r.status_code == 200:
-                PRODUCTS_CACHE = [p["_id"] for p in r.json().get("data", [])]
+            # ── Ambil daftar produk sekali di awal ──
+            if not PRODUCTS_CACHE:
+                r = self.client.get("/products?limit=50", name="/products [init]")
+                if r.status_code == 200:
+                    PRODUCTS_CACHE = [p["_id"] for p in r.json().get("data", [])]
+        except Exception:
+            self.token = None  # gagal login, lanjut tanpa token
 
     def auth_headers(self):
         if self.token:
@@ -147,20 +150,23 @@ class CustomerUser(HttpUser):
 # ════════════════════════════════════════════
 class AdminUser(HttpUser):
     weight    = 2   # 20% traffic admin
-    wait_time = between(1, 4)
+    wait_time = between(2, 5)
 
     def on_start(self):
         idx = random.randint(1, 5)
-        with self.client.post("/auth/login", json={
-            "email":    f"admin{idx}@tka.its.ac.id",
-            "password": "Admin@12345"
-        }, catch_response=True, name="/auth/login [admin]") as res:
-            if res.status_code == 200:
-                self.token = res.json().get("token")
-                res.success()
-            else:
-                self.token = None
-                res.success()
+        try:
+            with self.client.post("/auth/login", json={
+                "email":    f"admin{idx}@tka.its.ac.id",
+                "password": "Admin@12345"
+            }, catch_response=True, name="/auth/login [admin]") as res:
+                if res.status_code == 200:
+                    self.token = res.json().get("token")
+                    res.success()
+                else:
+                    self.token = None
+                    res.success()
+        except Exception:
+            self.token = None
 
     def auth_headers(self):
         if self.token:

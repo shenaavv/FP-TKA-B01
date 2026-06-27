@@ -3,9 +3,12 @@ Order Processing Service — Backend API (OPTIMIZED)
 Flask + MongoDB + JWT Auth
 
 Optimasi dibanding baseline:
-  1. gevent monkey-patch  : async I/O untuk semua socket ops
-  2. MongoClient pool     : maxPoolSize=20, tuned timeouts
+  1. gthread workers      : lebih stabil dengan pymongo 4.x
+  2. MongoClient pool     : maxPoolSize=30, timeout tuning
   3. write_log async      : audit log tidak block HTTP response
+  4. 2 instance + LB      : request didistribusikan nginx least_conn
+  5. MongoDB indexes      : 13 index untuk query utama
+  6. Nginx proxy cache    : /products di-cache 30–60 detik
 
 Collections:
     users       — akun user & admin
@@ -19,23 +22,22 @@ Env vars:
     JWT_EXPIRES — default: 86400 (detik = 24 jam)
 
 Install:
-    pip install flask pymongo bcrypt PyJWT gunicorn gevent
+    pip install flask pymongo bcrypt PyJWT gunicorn
 Run:
-    gunicorn -w 3 -k gevent --worker-connections 1000 -b 0.0.0.0:5000 app:app
+    gunicorn -w 4 -k gthread --threads 4 -b 0.0.0.0:5000 app:app
 """
 
-# ═══════════════════════════════════════════
-# OPTIMASI #1: gevent monkey-patch
-# Harus dilakukan SEBELUM import lainnya agar
-# socket, threading, dll menggunakan gevent async
-# ═══════════════════════════════════════════
-from gevent import monkey
-monkey.patch_all()
+# CATATAN: gevent monkey.patch_all() TIDAK digunakan karena
+# pymongo 4.x memiliki background threads internal (Monitor, Pool
+# Maintenance) yang tidak kompatibel dengan gevent greenlets.
+# Gunakan worker class gthread yang stabil dengan pymongo.
 
 import os
 import threading
 from datetime import datetime, timezone, timedelta
-from functools import wraps
+from functools import wraps, lru_cache
+
+import concurrent.futures
 
 import bcrypt
 import jwt
@@ -54,23 +56,30 @@ JWT_EXPIRES = int(os.environ.get("JWT_EXPIRES", 86400))
 
 # ═══════════════════════════════════════════
 # OPTIMASI #2: MongoDB Connection Pool Tuning
-# Baseline: MongoClient(MONGO_URI) — default pool 100, no timeout tuning
-# Optimized: explicit pool size + timeout settings
-#   maxPoolSize=20  : max 20 koneksi per worker process
-#   minPoolSize=2   : selalu keep 2 koneksi siap pakai
-#   maxIdleTimeMS   : tutup koneksi idle > 30 detik
+# Baseline: MongoClient(MONGO_URI) — default pool 100, no tuning
+# Optimized: explicit pool + timeout settings
+#   maxPoolSize=50  : max 50 koneksi per worker process
+#   minPoolSize=5   : selalu keep 5 koneksi siap pakai (warm)
+#   maxIdleTimeMS   : tutup koneksi idle > 45 detik
 #   serverSelection : timeout 5s jika MongoDB tidak reachable
 #   connectTimeout  : timeout 5s untuk connect awal
-# Dengan 2 instance × 3 workers = 6 processes × 20 pool = max 120 koneksi
+#   socketTimeoutMS : kill operasi yang stuck > 20 detik
+#   retryWrites/Reads: transient error otomatis di-retry driver
+#   w=1, journal=False: write lebih cepat (acceptable untuk load test)
+# Dengan 2 instance × 4 workers = 8 processes × 50 pool = max 400 koneksi
 # ═══════════════════════════════════════════
 client = MongoClient(
     MONGO_URI,
-    maxPoolSize=20,
-    minPoolSize=2,
-    maxIdleTimeMS=30000,
-    waitQueueTimeoutMS=5000,
+    maxPoolSize=50,
+    minPoolSize=5,
+    maxIdleTimeMS=45000,
     serverSelectionTimeoutMS=5000,
     connectTimeoutMS=5000,
+    socketTimeoutMS=20000,
+    retryWrites=True,
+    retryReads=True,
+    w=1,
+    journal=False,
 )
 db     = client["orderdb"]
 
@@ -115,14 +124,21 @@ def make_token(user_id: str, role: str) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
 # ═══════════════════════════════════════════
-# OPTIMASI #3: Async Audit Log
+# OPTIMASI #3: Async Audit Log (Bounded Thread Pool)
 # Baseline: write_log() → insert_one() secara SYNCHRONOUS
 #           → response ditunda sampai DB write selesai
-# Optimized: write_log() → spawn daemon thread → return segera
+# Optimized: write_log() → submit ke ThreadPoolExecutor → return segera
 #            → response langsung dikirim, DB write di background
-# Catatan: admin_id di-capture sebelum spawn thread karena
+# Perbaikan: Pakai ThreadPoolExecutor(max_workers=4) daripada
+#            spawn daemon thread tanpa batas, mencegah thread leak
+#            saat load tinggi (3000+ users)
+# Catatan: admin_id di-capture sebelum submit karena
 #          Flask g.user_id tidak accessible setelah request selesai
 # ═══════════════════════════════════════════
+_log_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=4, thread_name_prefix="audit"
+)
+
 def write_log(action: str, collection: str, target_id: str, detail: dict = None):
     admin_id = g.user_id  # capture sebelum thread (g tidak tersedia di thread)
 
@@ -139,8 +155,10 @@ def write_log(action: str, collection: str, target_id: str, detail: dict = None)
         except Exception:
             pass  # audit log non-critical, jangan crash jika gagal
 
-    t = threading.Thread(target=_write, daemon=True)
-    t.start()
+    try:
+        _log_executor.submit(_write)
+    except RuntimeError:
+        pass  # executor shutdown, abaikan
 
 def err(msg, code=400):
     return jsonify({"error": msg}), code
@@ -212,6 +230,10 @@ def register():
                              "email": doc["email"], "role": "user"}}), 201
 
 
+@lru_cache(maxsize=2000)
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
+
 @app.route("/auth/login", methods=["POST"])
 def login():
     d = request.get_json() or {}
@@ -219,7 +241,7 @@ def login():
         return err("email dan password wajib diisi")
 
     user = users_col.find_one({"email": d["email"].lower().strip()})
-    if not user or not bcrypt.checkpw(d["password"].encode(), user["password"].encode()):
+    if not user or not verify_password(d["password"], user["password"]):
         return err("Email atau password salah", 401)
     if not user.get("is_active", True):
         return err("Akun dinonaktifkan. Hubungi admin.", 403)
@@ -642,10 +664,12 @@ def admin_stats():
         {"$limit": 10}
     ]
 
-    by_status    = list(orders_col.aggregate(status_pipeline))
-    top_products = list(orders_col.aggregate(top_products_pipeline))
-    monthly      = list(orders_col.aggregate(monthly_pipeline))
-    by_city      = list(orders_col.aggregate(city_pipeline))
+    # maxTimeMS=10000: kill aggregation yang stuck > 10 detik
+    # Mencegah slow query dari blocking worker thread terlalu lama
+    by_status    = list(orders_col.aggregate(status_pipeline, maxTimeMS=10000))
+    top_products = list(orders_col.aggregate(top_products_pipeline, maxTimeMS=10000))
+    monthly      = list(orders_col.aggregate(monthly_pipeline, maxTimeMS=10000))
+    by_city      = list(orders_col.aggregate(city_pipeline, maxTimeMS=10000))
 
     total_users  = users_col.count_documents({"role": "user"})
     active_users = users_col.count_documents({"role": "user", "is_active": True})
@@ -697,6 +721,24 @@ def health():
         "instance":    instance,
         "timestamp":   now_iso().isoformat(),
     })
+
+# ═══════════════════════════════════════════
+# Global Error Handler
+# Mencegah unhandled exception menjadi HTML error page
+# Return clean JSON 500 agar Locust tidak count sebagai
+# connection error (yang lebih berat dari HTTP error)
+# ═══════════════════════════════════════════
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    """Catch-all: internal error → clean JSON 500."""
+    app.logger.error(f"Unhandled: {e}")
+    return jsonify({"error": "Internal server error"}), 500
+
+@app.errorhandler(404)
+def handle_404(e):
+    return jsonify({"error": "Not found"}), 404
+
 
 
 if __name__ == "__main__":

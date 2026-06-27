@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 #HAlo
 # config locust pengujian 1 :
 ## Max_user : 500
@@ -10,3 +11,6 @@
 # config locust pengujian 3 :
 ## Max_user : 6000
 ## Ramp up : 100
+=======
+#HAlo
+>>>>>>> 83a27bde1a4807141dbf2e324999b1b299304668

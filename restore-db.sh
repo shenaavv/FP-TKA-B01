@@ -30,7 +30,7 @@ DB_NAME=${MONGO_INITDB_DATABASE:-"orderdb"}
 DB_USER=${MONGO_INITDB_ROOT_USERNAME:-"admin"}
 DB_PASS=${MONGO_INITDB_ROOT_PASSWORD:-"TKAB01@2026"}
 DUMP_PATH="$SCRIPT_DIR/Resources/DB/dump"
-CONTAINER_NAME=${MONGO_CONTAINER_NAME:-"fp_mongo_baseline"}
+CONTAINER_NAME=${MONGO_CONTAINER_NAME:-"fp_mongo_optimized"}
 
 echo -e "${GREEN}====================================================${NC}"
 echo -e "${GREEN}        MongoDB Restore Database Utility            ${NC}"
