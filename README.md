@@ -398,9 +398,9 @@ Optimasi pada VM yang sama berhasil meningkatkan throughput dengan memanfaatkan 
 | MongoDB connection pool | Default | maxPoolSize=20, timeout tuned |
 | Audit log | Synchronous | Asynchronous |
 | MongoDB isolation | Berbagi VM dengan backend | Berbagi VM dengan backend |
-| RPS aktual | Not Found in Repository (lihat screenshot) | Not Found in Repository (lihat screenshot) |
-| Response time aktual | Not Found in Repository (lihat screenshot) | Not Found in Repository (lihat screenshot) |
-| Failure rate aktual | Not Found in Repository (lihat screenshot) | Not Found in Repository (lihat screenshot) |
+| RPS aktual | (lihat screenshot) |  (lihat screenshot) |
+| Response time aktual |  (lihat screenshot) |  (lihat screenshot) |
+| Failure rate aktual |  (lihat screenshot) |  (lihat screenshot) |
 | Bottleneck utama | Kapasitas konkuren (16 slot) + full collection scan | Kompetisi sumber daya MongoDB vs backend pada 1 VM |
 
 ### Analisis Peningkatan
@@ -488,14 +488,12 @@ flowchart TD
 
 ## Expected Benefits
 
-Berdasarkan konfigurasi yang ditemukan dalam repository:
+Berdasarkan konfigurasi yang ditemukan :
 
 - **Eliminasi kompetisi sumber daya MongoDB:** MongoDB berjalan pada VM dedicated (4 GB RAM, 2 vCPU), tidak lagi bersaing dengan backend Flask. WiredTiger cache 1.5 GB bersifat dedicated sehingga lebih efektif dalam menyimpan working-set data di memori.
 - **Peningkatan performa aggregasi:** Endpoint `/admin/stats` yang menjalankan query aggregasi berat mendapat manfaat langsung dari CPU dan RAM MongoDB yang tidak terkontaminasi oleh proses lain.
 - **Backend failover lintas VM:** Jika VM-1 mengalami gangguan, traffic dapat dialihkan secara manual ke VM-2. Jika hanya container backend_1 yang bermasalah, Nginx otomatis mengarahkan semua traffic ke backend_2 melalui mekanisme `max_fails=3 fail_timeout=30s`.
 - **Kemudahan scale horizontal:** Menambah kapasitas backend hanya memerlukan penambahan VM baru dan pembaruan upstream di konfigurasi Nginx, tanpa mengubah VM yang sedang berjalan.
-
-> Data pengujian performa aktual untuk konfigurasi Multi-VM tidak ditemukan dalam repository (Not Found in Repository).
 
 ---
 
@@ -520,21 +518,6 @@ Berdasarkan konfigurasi yang ditemukan dalam repository:
 | Scalability | Tidak bisa horizontal | Terbatas (1 VM) | Mudah (tambah VM baru) |
 | Fault tolerance | Tidak ada | Backend (container) | Backend (lintas VM) |
 | Bottleneck | Konkuren + no index + shared resource | Shared MongoDB resource | Jaringan VPC antar VM |
-
----
-
-## Comparative Performance Summary
-
-Data numerik RPS, peak concurrency, response time, dan failure rate yang terstruktur tidak tersedia dalam format teks di repository. Seluruh data performa tersedia dalam bentuk screenshot Locust dan screenshot monitoring resource di folder `Report/baseline/` dan `Report/optimized/`. Perbandingan kuantitatif dapat diperoleh dari screenshot tersebut.
-
-| Metrik | Baseline | Optimized | Multi-VM |
-|---|---|---|---|
-| RPS maksimum (0% failure) | Not Found in Repository | Not Found in Repository | Not Found in Repository |
-| Peak concurrent users | Not Found in Repository | Not Found in Repository | Not Found in Repository |
-| Response time rata-rata | Not Found in Repository | Not Found in Repository | Not Found in Repository |
-| Failure rate | Not Found in Repository | Not Found in Repository | Not Found in Repository |
-| CPU usage puncak | Not Found in Repository | Not Found in Repository | Not Found in Repository |
-| Memory usage puncak | Not Found in Repository | Not Found in Repository | Not Found in Repository |
 
 ---
 
@@ -578,7 +561,7 @@ Peningkatan kapasitas konkuren secara signifikan tanpa perlu menambah jumlah ins
 
 #### Latar Belakang
 
-Pada seluruh konfigurasi yang diimplementasikan (Baseline, Optimized, Multi-VM), MongoDB berjalan sebagai single node (standalone). Pada konfigurasi Multi-VM, MongoDB memang mendapat dedicated VM (VM-3), namun tetap merupakan single point of failure: apabila VM-3 atau container MongoDB mengalami gangguan, seluruh layanan tidak dapat memproses transaksi. File konfigurasi `docker-compose-multivm-vm3.yml` tidak mengandung konfigurasi replica set. Tidak terdapat konfigurasi `replicaSet` maupun `rs.init()` dalam seluruh file repository.
+Pada seluruh konfigurasi yang diimplementasikan (Baseline, Optimized, Multi-VM), MongoDB berjalan sebagai single node (standalone). Pada konfigurasi Multi-VM, MongoDB memang mendapat dedicated VM (VM-3), namun tetap merupakan single point of failure: apabila VM-3 atau container MongoDB mengalami gangguan, seluruh layanan tidak dapat memproses transaksi. File konfigurasi `docker-compose-multivm-vm3.yml` tidak mengandung konfigurasi replica set.
 
 #### Solusi yang Diusulkan
 
@@ -638,7 +621,7 @@ Data yang ditampilkan ke pengguna akan lebih akurat segera setelah admin melakuk
 
 #### Latar Belakang
 
-Pemantauan resource selama pengujian dilakukan secara manual menggunakan `htop` atau monitoring bawaan DigitalOcean (terlihat dari screenshot resource di folder `Report/baseline/` dan `Report/optimized/`). Tidak ditemukan konfigurasi monitoring otomatis seperti Prometheus, Grafana, atau sistem logging terpusat dalam repository. Pada arsitektur Multi-VM dengan tiga VM terpisah, pemantauan manual semakin tidak praktis karena engineer harus memantau tiga terminal berbeda secara bersamaan. Locust file juga tidak mengekspor metrik ke sistem eksternal.
+Pemantauan resource selama pengujian dilakukan secara manual menggunakan `htop` atau monitoring bawaan DigitalOcean (terlihat dari screenshot resource di folder `Report/baseline/` dan `Report/optimized/`). Tidak ditemukan konfigurasi monitoring otomatis seperti Prometheus, Grafana, atau sistem logging terpusat. Pada arsitektur Multi-VM dengan tiga VM terpisah, pemantauan manual semakin tidak praktis karena engineer harus memantau tiga terminal berbeda secara bersamaan. Locust file juga tidak mengekspor metrik ke sistem eksternal.
 
 #### Solusi yang Diusulkan
 
@@ -716,7 +699,7 @@ Kapasitas backend dapat menyesuaikan diri secara otomatis terhadap perubahan beb
 
 ## Final Recommendations
 
-Berdasarkan implementasi aktual, hasil konfigurasi yang ditemukan dalam repository, dan keterbatasan anggaran $75/bulan, berikut adalah rekomendasi akhir untuk pengembangan sistem ke depan.
+Berdasarkan implementasi aktual, hasil konfigurasi yang ditemukan, dan keterbatasan anggaran $75/bulan, berikut adalah rekomendasi akhir untuk pengembangan sistem ke depan.
 
 **Rekomendasi untuk Deployment Langsung (Immediate)**
 
