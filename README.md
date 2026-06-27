@@ -329,17 +329,17 @@ flowchart LR
 
 **Skenario 2 — Peak Concurrency Spawn Rate 50**
 
-![Hasil Locust Optimized Skenario 2](Report\optimized\try_2\image.pngg)
+<img width="1648" height="969" alt="image" src="https://github.com/user-attachments/assets/b13f67cc-0531-48e6-98fb-450382f21f6c" />
 
 *Grafik hasil Locust — Skenario 2 Optimized*
 
-![Resource Utilization Optimized Skenario 1](Report\optimized\try_2\Resources.png)
+<img width="1683" height="952" alt="image" src="https://github.com/user-attachments/assets/050aadda-3735-4ff3-9e89-1ac4d4b9c999" />
 
 *Utilisasi resource server — Skenario 2 Optimized*
 
 **Skenario 3 — Peak Concurrency Spawn Rate 100**
 
-![Hasil Locust Optimized Skenario 3](Report\optimized\try_3\image.png)
+<img width="1708" height="997" alt="image" src="https://github.com/user-attachments/assets/bfdbd82f-6939-4e30-97eb-86e15a2280ed" />
 
 *Grafik hasil Locust — Skenario 3 Optimized*
 
